@@ -35,6 +35,7 @@ import (
 
 const (
 	Label         = "helmcharts.helm.cattle.io/chart"
+	ChartAction   = "helmcharts.helm.cattle.io/chart-action"
 	Annotation    = "helmcharts.helm.cattle.io/configHash"
 	Unmanaged     = "helmcharts.helm.cattle.io/unmanaged"
 	ManagedBy     = "helmcharts.cattle.io/managed-by"
@@ -162,6 +163,55 @@ func Register(
 		helms,
 		jobs, crbs, sas, cm,
 	)
+
+	jobs.AddGenericHandler(ctx, "on-helm-chart-job-done", func(key string, obj runtime.Object) (runtime.Object, error) {
+		job, ok := obj.(*batch.Job)
+		if !ok {
+			return obj, nil
+		}
+
+		namespace := job.Namespace
+		chartName, ok := job.Labels[Label]
+		if !ok {
+			return obj, nil
+		}
+
+		action, ok := job.Labels[ChartAction]
+		if !ok {
+			return obj, nil
+		}
+
+		chart, err := c.helms.Get(namespace, chartName, metav1.GetOptions{})
+		if err != nil {
+			return obj, nil
+		}
+
+		return c.OnJobDone(chart, job, action)
+	})
+}
+
+func (c *Controller) OnJobDone(chart *v1.HelmChart, job *batch.Job, action string) (runtime.Object, error) {
+	if action != "install" {
+		return job, nil
+	}
+
+	if chart.Status.Condition != v1.StatusConditionPending {
+		return job, nil
+	}
+
+	if job.Status.Succeeded > 0 {
+		chartCopy := chart.DeepCopy()
+		chartCopy.Status.Condition = v1.StatusConditionReady
+		chartCopy.Status.JobName = job.Name
+		_, err := c.helms.Update(chartCopy)
+		if err != nil {
+			return job, fmt.Errorf("unable to update status of helm chart %s to mark it as ready", chart.Name)
+		}
+
+		c.recorder.Eventf(chart, corev1.EventTypeNormal, "Update", "HelmChart using Job %s/%s is ready", job.Namespace, job.Name)
+	}
+
+	return job, nil
 }
 
 func (c *Controller) jobPatcher(namespace, name string, pt types.PatchType, data []byte) (runtime.Object, error) {
@@ -407,7 +457,8 @@ func job(chart *v1.HelmChart, apiServerPort string) (*batch.Job, *corev1.Secret,
 			Name:      fmt.Sprintf("helm-%s-%s", action, chart.Name),
 			Namespace: chart.Namespace,
 			Labels: map[string]string{
-				Label: chart.Name,
+				Label:       chart.Name,
+				ChartAction: action,
 			},
 		},
 		Spec: batch.JobSpec{
@@ -415,7 +466,8 @@ func job(chart *v1.HelmChart, apiServerPort string) (*batch.Job, *corev1.Secret,
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{},
 					Labels: map[string]string{
-						Label: chart.Name,
+						Label:       chart.Name,
+						ChartAction: action,
 					},
 				},
 				Spec: corev1.PodSpec{
