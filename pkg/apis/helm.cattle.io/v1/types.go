@@ -44,8 +44,17 @@ type HelmChartSpec struct {
 	SecurityContext    *corev1.SecurityContext    `json:"securityContext,omitempty"`
 }
 
+type HelmChartStatusCondition string
+
+const (
+	StatusConditionPending  HelmChartStatusCondition = "pending"
+	StatusConditionReady    HelmChartStatusCondition = "ready"
+	StatusConditionDeleting HelmChartStatusCondition = "deleting"
+)
+
 type HelmChartStatus struct {
-	JobName string `json:"jobName,omitempty"`
+	Condition HelmChartStatusCondition `json:"condition,omitempty"`
+	JobName   string                   `json:"jobName,omitempty"`
 }
 
 // +genclient

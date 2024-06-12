@@ -213,6 +213,7 @@ func (c *Controller) OnChange(chart *v1.HelmChart, chartStatus v1.HelmChartStatu
 		return nil, chartStatus, err
 	}
 	// update status
+	chartStatus.Condition = v1.StatusConditionPending
 	chartStatus.JobName = job.Name
 
 	// emit an event to indicate that this Helm chart is being applied
@@ -266,6 +267,7 @@ func (c *Controller) OnRemove(key string, chart *v1.HelmChart) (*v1.HelmChart, e
 	if job.Status.Succeeded <= 0 {
 		// temporarily recreate the chart, but keep the deletion timestamp
 		chartCopy := chart.DeepCopy()
+		chartCopy.Status.Condition = v1.StatusConditionDeleting
 		chartCopy.Status.JobName = job.Name
 		newChart, err := c.helms.Update(chartCopy)
 		if err != nil {
